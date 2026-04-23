@@ -70,7 +70,7 @@ def init_db():
             );
         """)
         cur.execute("INSERT INTO settings (key,value) VALUES ('caption','Aur videos ke liye admin se contact karein.') ON CONFLICT (key) DO NOTHING;")
-        cur.execute("INSERT INTO settings (key,value) VALUES ('contact','https://t.me/youradmin') ON CONFLICT (key) DO NOTHING;")
+        cur.execute("INSERT INTO settings (key,value) VALUES ('contact','https://t.me/lolly_77') ON CONFLICT (key) DO NOTHING;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fetched_content (
                 id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
