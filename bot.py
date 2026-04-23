@@ -69,7 +69,7 @@ def init_db():
                 key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
         """)
-        cur.execute("INSERT INTO settings (key,value) VALUES ('caption','Aur videos ke liye admin se contact karein.') ON CONFLICT (key) DO NOTHING;")
+        cur.execute("INSERT INTO settings (key,value) VALUES ('caption','*BUY NOW PREMIUM📩👇👇*') ON CONFLICT (key) DO NOTHING;")
         cur.execute("INSERT INTO settings (key,value) VALUES ('contact','https://t.me/lolly_77') ON CONFLICT (key) DO NOTHING;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fetched_content (
