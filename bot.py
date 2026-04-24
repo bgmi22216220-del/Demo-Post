@@ -1,7 +1,8 @@
 """
 Single-file Telegram Bot — Railway.app compatible
-- /index auto fetches latest messages from channel (no CHANNEL_LAST_MSG_ID needed)
-- Broadcast supports image + caption + clickable links (HTML parse mode)
+Fixes:
+  - /broadcast: image reply + caption + HTML links working
+  - Contact Admin button: CONTACT_ADMIN env variable se
 """
 
 import json
@@ -24,8 +25,9 @@ BOT_TOKEN            = os.environ["BOT_TOKEN"]
 ADMIN_ID             = int(os.environ["ADMIN_ID"])
 DATABASE_URL         = os.environ["DATABASE_URL"]
 CHANNEL_ID           = int(os.environ["CHANNEL_ID"])
+CONTACT_ADMIN        = os.environ.get("CONTACT_ADMIN", "https://t.me/youradmin")
 VIDEOS_PER_SESSION   = 20
-VIDEO_DELETE_SECONDS = 5 * 60   # 5 minutes
+VIDEO_DELETE_SECONDS = 5 * 60
 CYCLE_DAYS           = 7
 
 logging.basicConfig(
@@ -69,8 +71,7 @@ def init_db():
                 key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
         """)
-        cur.execute("INSERT INTO settings (key,value) VALUES ('caption','*BUY NOW PREMIUM📩👇👇*') ON CONFLICT (key) DO NOTHING;")
-        cur.execute("INSERT INTO settings (key,value) VALUES ('contact','https://t.me/lolly_77') ON CONFLICT (key) DO NOTHING;")
+        cur.execute("INSERT INTO settings (key,value) VALUES ('caption','Aur videos ke liye admin se contact karein.') ON CONFLICT (key) DO NOTHING;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fetched_content (
                 id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL,
@@ -235,26 +236,7 @@ def save_channel_video(message_id, media_type="video"):
     finally:
         conn.close()
 
-def get_channel_video_count():
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM channel_videos;")
-        return cur.fetchone()[0]
-    finally:
-        conn.close()
-
-def get_all_channel_video_ids():
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT message_id FROM channel_videos ORDER BY RANDOM() LIMIT 100;")
-        return [r[0] for r in cur.fetchall()]
-    finally:
-        conn.close()
-
 def get_latest_channel_video_ids(count):
-    """Return the most recently indexed video IDs (highest message_id = latest post)."""
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -275,22 +257,8 @@ def clear_channel_videos():
     finally:
         conn.close()
 
-def get_max_indexed_message_id():
-    """Returns highest already-indexed message_id (for incremental scan)."""
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(message_id) FROM channel_videos;")
-        row = cur.fetchone()
-        return row[0] if row and row[0] else 0
-    finally:
-        conn.close()
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 async def _safe_delete(bot, chat_id, msg_ids):
     for mid in msg_ids:
         try:
@@ -299,17 +267,23 @@ async def _safe_delete(bot, chat_id, msg_ids):
             pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# AUTO-INDEX: find latest message_id in channel automatically
-# ═══════════════════════════════════════════════════════════════════════════════
+def _contact_url():
+    """Build contact URL from CONTACT_ADMIN env var."""
+    raw = CONTACT_ADMIN.strip()
+    if raw.startswith("@"):
+        return f"https://t.me/{raw[1:]}"
+    if raw.lstrip("-").isdigit():
+        # Numeric ID — open telegram user by id (tg://user?id=...)
+        return f"tg://user?id={raw}"
+    if raw.startswith("http"):
+        return raw
+    return f"https://t.me/{raw}"
 
-async def _find_latest_message_id(bot, start_from: int = 1) -> int:
-    """
-    Binary-search style probe to find the latest message_id in the channel.
-    Tries high IDs first, walks back to find the actual latest valid one.
-    """
-    probe = max(start_from, 1)
-    # Probe upward exponentially to find upper bound
+
+# ── Auto-find latest message ID ───────────────────────────────────────────────
+async def _find_latest_message_id(bot) -> int:
+    probe = 1
+    # Exponential probe upward
     while True:
         try:
             msg = await bot.forward_message(
@@ -317,11 +291,10 @@ async def _find_latest_message_id(bot, start_from: int = 1) -> int:
                 message_id=probe, disable_notification=True,
             )
             await bot.delete_message(chat_id=ADMIN_ID, message_id=msg.message_id)
-            probe *= 2  # keep going up
+            probe *= 2
         except TelegramError:
-            break  # probe is beyond latest — upper bound found
+            break
 
-    # Now scan down from probe//2 to probe to find the real latest
     upper = probe
     lower = probe // 2
     latest = lower
@@ -341,10 +314,7 @@ async def _find_latest_message_id(bot, start_from: int = 1) -> int:
     return latest
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SCHEDULED JOBS
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ── Scheduled jobs ────────────────────────────────────────────────────────────
 async def _delete_videos_job(context: ContextTypes.DEFAULT_TYPE):
     d = context.job.data
     await _safe_delete(context.bot, d["chat_id"], d["msg_ids"])
@@ -369,7 +339,6 @@ async def _delete_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════════════
 # /start
 # ═══════════════════════════════════════════════════════════════════════════════
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user    = update.effective_user
     chat_id = update.effective_chat.id
@@ -388,7 +357,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Warning
     warn = await bot.send_message(
         chat_id=chat_id,
-        text="⚠️ *Videos Auto Delete After 5 minute.*",
+        text="⚠️ *Yeh videos 5 minute baad auto-delete ho jayenge.*\n\n📥 Download ya Forward disabled hai.",
         parse_mode="Markdown",
     )
     all_del = [warn.message_id]
@@ -406,12 +375,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except TelegramError as e:
                 logger.warning(f"Cached video {ch_id}: {e}")
     else:
-        # Fetch latest videos from channel
         ch_ids = get_latest_channel_video_ids(VIDEOS_PER_SESSION)
         if not ch_ids:
             await bot.send_message(
                 chat_id=chat_id,
-                text="❌ Koi video nahi mili.\nAdmin pehle `/index` command chalaye.",
+                text="❌ Koi video nahi mili.\nAdmin pehle /index command chalaye.",
             )
             return
         for ch_id in ch_ids:
@@ -428,15 +396,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.bot_data[prev_key] = all_del
 
-    # Final caption + button (permanent)
+    # Final caption + Contact button — CONTACT_ADMIN variable se
     caption = get_setting("caption")
-    contact = get_setting("contact")
+    contact_url = _contact_url()
+
     await bot.send_message(
         chat_id=chat_id,
         text=f"📌 *{caption}*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📩 Contact Admin", url=contact)]]
+            [[InlineKeyboardButton("📩 Contact Admin", url=contact_url)]]
         ),
     )
 
@@ -449,43 +418,37 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ADMIN: /index  — auto-detect latest message_id, scan channel
+# /index
 # ═══════════════════════════════════════════════════════════════════════════════
-
 async def index_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
 
-    # Optional manual range: /index 1 300
-    # Without args: auto-detect latest and scan last 500 messages
     if len(context.args) >= 2:
         try:
             start_id = int(context.args[0])
             end_id   = int(context.args[1])
         except ValueError:
-            return await update.message.reply_text("❌ Valid numbers do. Example: `/index 1 300`", parse_mode="Markdown")
+            return await update.message.reply_text("❌ Example: `/index 1 300`", parse_mode="Markdown")
+        status = await update.message.reply_text(
+            f"🔍 Scanning `{start_id}` – `{end_id}`...", parse_mode="Markdown"
+        )
     else:
         status = await update.message.reply_text("🔍 Channel ka latest message dhundh raha hoon...")
-        latest = await _find_latest_message_id(context.bot, start_from=1)
+        latest   = await _find_latest_message_id(context.bot)
         end_id   = latest
-        start_id = max(1, end_id - 499)   # scan last 500 messages
+        start_id = max(1, end_id - 499)
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=status.message_id,
-            text=f"🔍 Latest message ID: `{end_id}`\nScanning `{start_id}` – `{end_id}`...",
+            text=f"🔍 Latest ID: `{end_id}` — Scanning `{start_id}` to `{end_id}`...",
             parse_mode="Markdown",
         )
 
     clear_channel_videos()
-
-    if len(context.args) < 2:
-        status_msg_id = status.message_id
-    else:
-        s = await update.message.reply_text(f"🔍 Scanning `{start_id}` – `{end_id}`...", parse_mode="Markdown")
-        status_msg_id = s.message_id
-
     found = 0
-    for msg_id in range(end_id, start_id - 1, -1):   # newest first
+
+    for msg_id in range(end_id, start_id - 1, -1):
         try:
             fwd = await context.bot.forward_message(
                 chat_id=ADMIN_ID, from_chat_id=CHANNEL_ID,
@@ -508,11 +471,11 @@ async def index_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.edit_message_text(
         chat_id=update.effective_chat.id,
-        message_id=status_msg_id,
+        message_id=status.message_id,
         text=(
             f"✅ *Index complete!*\n"
-            f"📹 Videos/Docs found: *{found}*\n"
-            f"📊 Range scanned: `{start_id}` – `{end_id}`\n\n"
+            f"📹 Found: *{found}* videos\n"
+            f"📊 Range: `{start_id}` – `{end_id}`\n\n"
             f"Ab /start karne par latest {VIDEOS_PER_SESSION} videos milenge."
         ),
         parse_mode="Markdown",
@@ -520,28 +483,20 @@ async def index_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ADMIN: /reset
+# /reset  /setcaption  /setcontact
 # ═══════════════════════════════════════════════════════════════════════════════
-
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
     reset_all_content()
-    await update.message.reply_text(
-        "✅ *Reset ho gaya!*\n\nSabko next /start par latest videos milenge.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text("✅ *Reset! Sabko fresh videos milenge.*", parse_mode="Markdown")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ADMIN: /setcaption  /setcontact
-# ═══════════════════════════════════════════════════════════════════════════════
 
 async def setcaption_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
     if not context.args:
-        return await update.message.reply_text("Usage: `/setcaption Your caption here`", parse_mode="Markdown")
+        return await update.message.reply_text("Usage: `/setcaption Your caption`", parse_mode="Markdown")
     text = " ".join(context.args)
     set_setting("caption", text)
     await update.message.reply_text(f"✅ Caption set:\n_{text}_", parse_mode="Markdown")
@@ -550,53 +505,59 @@ async def setcaption_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def setcontact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
-    if not context.args:
-        return await update.message.reply_text("Usage: `/setcontact @username`", parse_mode="Markdown")
-    raw = context.args[0].strip()
-    url = f"https://t.me/{raw[1:]}" if raw.startswith("@") else raw
-    set_setting("contact", url)
-    await update.message.reply_text(f"✅ Contact set: {url}")
+    await update.message.reply_text(
+        "ℹ️ Contact button ke liye Railway mein `CONTACT_ADMIN` variable update karo.\n\n"
+        "Example values:\n"
+        "• `@yourusername`\n"
+        "• `https://t.me/yourusername`\n"
+        "• `123456789` (Telegram user ID)",
+        parse_mode="Markdown",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ADMIN: /broadcast  — image + caption + links (HTML)
+# /broadcast  — FIXED: image reply + caption + HTML links
 #
-# HOW TO USE:
-#   1. Image + caption + link:
-#      → Channel/chat mein image bhejo
-#      → Us image ko REPLY karo: /broadcast Check this out! <a href="https://t.me/yourchannel">Join Here</a>
-#
-#   2. Text only with link:
-#      → /broadcast Hello everyone! Visit <a href="https://example.com">our site</a>
-#
-#   3. Bold/italic text:
-#      → /broadcast <b>Important</b> announcement for all users!
+# Usage:
+#   Text only:   /broadcast Hello <a href="https://t.me/ch">Join</a>
+#   Image+text:  Kisi image ko reply karo → /broadcast Caption <a href="URL">Link</a>
 # ═══════════════════════════════════════════════════════════════════════════════
-
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
 
-    msg      = update.message
-    user_ids = get_all_user_ids()
-    # Caption = everything after /broadcast command
-    caption  = " ".join(context.args) if context.args else None
-    reply    = msg.reply_to_message
+    msg   = update.message
+    reply = msg.reply_to_message
 
+    # Caption = sab kuch /broadcast ke baad
+    # Support karta hai: plain text, HTML tags, <a href> links
+    raw_text = msg.text or msg.caption or ""
+    # Remove the /broadcast command prefix
+    if raw_text.lower().startswith("/broadcast"):
+        caption = raw_text[len("/broadcast"):].strip()
+    else:
+        caption = raw_text.strip()
+
+    # Agar reply mein caption ho aur command mein nahi
+    if not caption and reply and reply.caption:
+        caption = reply.caption
+
+    user_ids = get_all_user_ids()
     if not user_ids:
         return await msg.reply_text("⚠️ Koi registered user nahi mila.")
 
-    # Validate: kuch toh hona chahiye broadcast karne ke liye
     if not reply and not caption:
         return await msg.reply_text(
-            "❌ *Usage:*\n\n"
-            "• Text: `/broadcast Aapka message <a href='URL'>Link Text</a>`\n"
-            "• Image+Caption: Image reply karo + `/broadcast Caption <a href='URL'>Link</a>`",
+            "❌ *Broadcast Usage:*\n\n"
+            "📝 Text only:\n`/broadcast Aapka message`\n\n"
+            "🔗 Text with link:\n`/broadcast Visit <a href='https://t.me/ch'>Channel</a>`\n\n"
+            "🖼 Image + caption + link:\n"
+            "Image ko reply karo phir likho:\n`/broadcast Caption <a href='URL'>Link Text</a>`",
             parse_mode="Markdown",
         )
 
-    await msg.reply_text(
-        f"📢 Broadcasting to *{len(user_ids)}* users...",
+    sending_msg = await msg.reply_text(
+        f"📢 *Broadcasting to {len(user_ids)} users...*",
         parse_mode="Markdown",
     )
 
@@ -606,39 +567,43 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             sent = None
 
+            # ── Image broadcast ──────────────────────────────────────────────
             if reply and reply.photo:
-                # Image with optional HTML caption (supports links, bold, italic)
                 sent = await context.bot.send_photo(
                     chat_id=uid,
                     photo=reply.photo[-1].file_id,
-                    caption=caption,
-                    parse_mode="HTML" if caption else None,
+                    caption=caption if caption else None,
+                    parse_mode="HTML",
                 )
+            # ── Video broadcast ──────────────────────────────────────────────
             elif reply and reply.video:
                 sent = await context.bot.send_video(
                     chat_id=uid,
                     video=reply.video.file_id,
-                    caption=caption,
-                    parse_mode="HTML" if caption else None,
+                    caption=caption if caption else None,
+                    parse_mode="HTML",
                 )
+            # ── Document broadcast ───────────────────────────────────────────
             elif reply and reply.document:
                 sent = await context.bot.send_document(
                     chat_id=uid,
                     document=reply.document.file_id,
-                    caption=caption,
-                    parse_mode="HTML" if caption else None,
+                    caption=caption if caption else None,
+                    parse_mode="HTML",
                 )
+            # ── GIF/Animation broadcast ──────────────────────────────────────
             elif reply and reply.animation:
                 sent = await context.bot.send_animation(
                     chat_id=uid,
                     animation=reply.animation.file_id,
-                    caption=caption,
-                    parse_mode="HTML" if caption else None,
+                    caption=caption if caption else None,
+                    parse_mode="HTML",
                 )
+            # ── Text only broadcast ──────────────────────────────────────────
             else:
-                # Pure text broadcast (HTML supported — links, bold, italic)
                 if not caption:
-                    return await msg.reply_text("❌ Caption ya image do.")
+                    await sending_msg.edit_text("❌ Kuch toh do broadcast ke liye.")
+                    return
                 sent = await context.bot.send_message(
                     chat_id=uid,
                     text=caption,
@@ -654,11 +619,11 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Broadcast uid {uid}: {e}")
             fail += 1
 
-    await msg.reply_text(
+    await sending_msg.edit_text(
         f"✅ *Broadcast Complete!*\n\n"
         f"📨 Sent: *{ok}*\n"
         f"❌ Failed: *{fail}*\n"
-        f"⏳ Yeh messages *24 ghante* baad sabke chat se auto-delete ho jayenge.",
+        f"⏳ 24 ghante baad auto-delete.",
         parse_mode="Markdown",
     )
 
@@ -666,7 +631,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════════════
 # STARTUP & MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
-
 async def _on_startup(app: Application):
     app.job_queue.run_repeating(
         _delete_broadcast_job, interval=300, first=10, name="broadcast_cleaner"
