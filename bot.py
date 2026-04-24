@@ -495,11 +495,21 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def setcaption_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return await update.message.reply_text("🚫 Unauthorized.")
-    if not context.args:
-        return await update.message.reply_text("Usage: `/setcaption Your caption`", parse_mode="Markdown")
-    text = " ".join(context.args)
+    # Raw text lena zaroori hai — context.args HTML tags tod deta hai
+    raw = update.message.text or ""
+    # "/setcaption " ke baad ka poora text lo
+    if " " not in raw.strip():
+        return await update.message.reply_text(
+            "Usage: /setcaption Aapka caption yahan likhein\n\n"
+            "Example:\n/setcaption 🔥 Daily videos ke liye join karo!",
+        )
+    text = raw.split(" ", 1)[1].strip()
+    if not text:
+        return await update.message.reply_text("❌ Caption empty hai. Kuch text do.")
     set_setting("caption", text)
-    await update.message.reply_text(f"✅ Caption set:\n_{text}_", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✅ Caption update ho gaya!\n\n📌 New caption:\n{text}"
+    )
 
 
 async def setcontact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -635,7 +645,26 @@ async def _on_startup(app: Application):
     app.job_queue.run_repeating(
         _delete_broadcast_job, interval=300, first=10, name="broadcast_cleaner"
     )
-    logger.info("✅ Broadcast cleaner scheduled.")
+    # Bot command menu set karo (Telegram menu mein sirf yahi commands dikhenge)
+    await app.bot.set_my_commands([
+        ("start", "Videos dekho"),
+    ])
+    # Admin commands menu (private)
+    from telegram import BotCommandScopeChat
+    try:
+        await app.bot.set_my_commands(
+            [
+                ("start",      "Videos dekho"),
+                ("index",      "Channel index karo"),
+                ("reset",      "Cache reset karo"),
+                ("setcaption", "Caption set karo"),
+                ("broadcast",  "Sabko message bhejo"),
+            ],
+            scope=BotCommandScopeChat(chat_id=ADMIN_ID),
+        )
+    except Exception:
+        pass
+    logger.info("✅ Broadcast cleaner scheduled. Bot commands set.")
 
 
 def main():
