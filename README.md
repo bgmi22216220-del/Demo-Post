@@ -1,7 +1,7 @@
-# 🤖 Advanced Telegram Video Bot
+# 🤖 Telegram Video Bot
 
 Private channel se videos fetch karke users ko bhejne wala bot.
-Auto-delete, 7-day cycle, admin panel — sab kuch included.
+Auto-delete, 7-day cycle, admin panel — sab included.
 
 ---
 
@@ -9,155 +9,178 @@ Auto-delete, 7-day cycle, admin panel — sab kuch included.
 
 ```
 telegram_bot/
-├── bot.py                      # Main entry point
-├── config.py                   # Environment variable loader
-├── database.py                 # PostgreSQL (Neon) — all DB operations
-├── requirements.txt
-├── Procfile                    # Railway.app worker
-├── railway.toml                # Railway deployment config
-├── .env.example                # Environment variable template
-├── handlers/
-│   ├── __init__.py
-│   ├── user_handlers.py        # /start command
-│   └── admin_handlers.py       # /reset /setcaption /setcontact /broadcast
-└── utils/
-    ├── __init__.py
-    └── channel_indexer.py      # /index command — channel video scanner
+├── bot.py            ← Poora bot (single file)
+├── requirements.txt  ← Dependencies
+├── Procfile          ← Railway worker config
+├── railway.toml      ← Railway deploy config
+└── README.md
 ```
 
 ---
 
-## ⚙️ Setup Guide
+## ⚙️ Railway Variables
 
-### Step 1 — Bot Token
-1. [@BotFather](https://t.me/BotFather) se `/newbot` karein
-2. Token copy karein
+Railway dashboard mein **Settings → Variables** mein yeh 5 variables daalo:
 
-### Step 2 — Channel Setup
-1. Bot ko apne private channel ka **Admin** banao
-2. Channel ID pane ke liye koi bhi channel message forward karo [@userinfobot](https://t.me/userinfobot) ko
-3. ID `-100xxxxxxxxxx` format mein hogi
+| Variable Name | Example Value | Kahan Se Milega |
+|---|---|---|
+| `BOT_TOKEN` | `7412345678:AAFxxx...` | @BotFather se |
+| `ADMIN_ID` | `987654321` | @userinfobot se |
+| `DATABASE_URL` | `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require` | Neon Console se |
+| `CHANNEL_ID` | `-1001234567890` | Channel message forward karo @userinfobot ko |
+| `CONTACT_ADMIN` | `@yourusername` | Apna Telegram username |
 
-### Step 3 — Neon PostgreSQL
+---
+
+## 🚀 Setup Guide (Step by Step)
+
+### Step 1 — Bot Banao
+1. Telegram mein [@BotFather](https://t.me/BotFather) ko `/newbot` bhejo
+2. Naam aur username do
+3. Jo **Token** mile use copy karo → `BOT_TOKEN`
+
+### Step 2 — Apna Telegram ID Pata Karo
+1. [@userinfobot](https://t.me/userinfobot) ko `/start` bhejo
+2. Jo **ID** mile use copy karo → `ADMIN_ID`
+
+### Step 3 — Channel Setup
+1. Apna private channel kholo
+2. Bot ko channel ka **Admin** banao (post karne ki permission chahiye)
+3. Channel se koi bhi message **forward karo** [@userinfobot](https://t.me/userinfobot) ko
+4. Jo **Forwarded from ID** mile (e.g. `-1001234567890`) → `CHANNEL_ID`
+
+### Step 4 — Neon Database Banao
 1. [neon.tech](https://neon.tech) par free account banao
-2. New Project → New Database
-3. Connection string copy karo (`postgresql://...`)
+2. **New Project** → **New Database** banao
+3. Dashboard mein **Connection String** copy karo
+4. End mein `?sslmode=require` lagao → `DATABASE_URL`
 
-### Step 4 — Environment Variables
-
-`.env.example` ko `.env` mein copy karo aur fill karo:
-
-```bash
-cp .env.example .env
+```
+postgresql://neondb_owner:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
 ```
 
-```env
-BOT_TOKEN=your_bot_token
-ADMIN_ID=your_telegram_id
-DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
-CHANNEL_ID=-1001234567890
-CHANNEL_LAST_MSG_ID=500
-```
-
-### Step 5 — Install & Run
-
-```bash
-pip install -r requirements.txt
-python bot.py
-```
+### Step 5 — Railway Par Deploy Karo
+1. Yeh saari files **GitHub repo** mein push karo
+2. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub**
+3. Repo select karo
+4. **Variables** tab mein upar wale 5 variables daalo
+5. **Deploy** button dabao ✅
 
 ---
 
-## 🚀 Railway.app Deployment
-
-1. GitHub par code push karo
-2. [railway.app](https://railway.app) → New Project → Deploy from GitHub
-3. **Variables** section mein ye sab add karo:
-   - `BOT_TOKEN`
-   - `ADMIN_ID`
-   - `DATABASE_URL`
-   - `CHANNEL_ID`
-   - `CHANNEL_LAST_MSG_ID`
-4. Deploy button dabao ✅
-
----
-
-## 📋 Commands Reference
+## 📋 Commands
 
 ### 👤 User Commands
-| Command | Description |
-|---------|-------------|
-| `/start` | 20 random videos fetch karo (5 min auto-delete) |
+
+| Command | Kya karta hai |
+|---|---|
+| `/start` | Latest 20 videos milenge (5 min mein auto-delete) |
 
 ### 👑 Admin Commands
-| Command | Usage | Description |
-|---------|-------|-------------|
-| `/index` | `/index 1 500` | Channel scan karke video IDs store karo |
-| `/reset` | `/reset` | Sabke video cache delete karo (fresh fetch hoga) |
-| `/setcaption` | `/setcaption Naye videos ke liye...` | Final message ka caption set karo |
-| `/setcontact` | `/setcontact @yourusername` | Contact button ka link set karo |
-| `/broadcast` | Image reply karo + `/broadcast Caption` | Sabko broadcast karo |
+
+| Command | Usage | Kya karta hai |
+|---|---|---|
+| `/index` | `/index` | Channel auto-scan karta hai, saare videos index karta hai |
+| `/index` | `/index 1 300` | Manual range se scan karta hai |
+| `/reset` | `/reset` | Sab users ka cache delete karta hai (fresh videos milenge) |
+| `/setcaption` | `/setcaption Aapka text` | Final message ka caption change karta hai |
+| `/broadcast` | `/broadcast Message` | Sabko text message bhejta hai |
+| `/broadcast` | Image reply + `/broadcast Caption` | Sabko image + caption bhejta hai |
 
 ---
 
-## 🔄 First-Time Setup Flow
+## 🔄 Pehli Baar Setup Flow
 
 ```
-1. Bot deploy karo Railway par
-2. Admin se /index 1 500  →  channel scan hoga
-3. Koi bhi user /start kare  →  videos milenge
-4. /setcaption aur /setcontact set karo
+Bot deploy karo Railway par
+        ↓
+Admin se /index chalao  →  Channel scan hoga (2-3 min lagenge)
+        ↓
+/setcaption se caption set karo
+        ↓
+Koi bhi user /start kare  →  Latest 20 videos milenge ✅
+```
+
+---
+
+## 📢 Broadcast Usage
+
+### Text only (link ke saath):
+```
+/broadcast Hamare channel mein aao! <a href="https://t.me/yourchannel">👉 Join Karo</a>
+```
+
+### Image + Caption + Link:
+```
+1. Pehle apne chat mein ek image bhejo
+2. Us image ko REPLY karo
+3. Phir likho:
+   /broadcast 🔥 Dekho yeh! <a href="https://t.me/ch">Channel Join Karo</a>
+```
+
+### Supported HTML Tags:
+| Tag | Result |
+|---|---|
+| `<b>text</b>` | **Bold** |
+| `<i>text</i>` | *Italic* |
+| `<a href="URL">text</a>` | Clickable Link |
+| `<code>text</code>` | Monospace |
+
+---
+
+## ⚡ Bot Kaise Kaam Karta Hai
+
+```
+User /start kare
+    │
+    ├─ Purane session messages delete
+    ├─ Warning bhejo: "5 min mein delete ho jayenge"
+    │
+    ├─ DB check: 7-day cache hai?
+    │     ├─ YES → Same 20 videos dobara bhejo
+    │     └─ NO  → Channel se latest 20 fetch karo + DB mein save karo
+    │
+    ├─ Videos bhejo (protect_content=True — forward/download band)
+    ├─ Final caption + Contact Admin button (hamesha rahega)
+    └─ Timer set: 5 min baad videos + warning auto-delete
 ```
 
 ---
 
 ## 🗄️ Database Tables
 
-| Table | Purpose |
-|-------|---------|
+| Table | Kaam |
+|---|---|
 | `users` | Registered users |
-| `settings` | caption / contact key-value |
-| `fetched_content` | User ke 7-day cached video IDs |
-| `broadcast_jobs` | Broadcast auto-delete tracker |
-| `channel_videos` | Indexed channel video message IDs |
+| `settings` | Caption store |
+| `fetched_content` | Har user ke 7-day cached video IDs |
+| `broadcast_jobs` | Broadcast 24h auto-delete tracker |
+| `channel_videos` | /index se scanned video message IDs |
 
 ---
 
-## ⚡ Feature Flow
+## 🔒 Security
 
-```
-User /start
-    │
-    ├─ Delete old session messages
-    ├─ Send warning: "5 min mein delete ho jayenge"
-    │
-    ├─ DB check: 7-day cache hai?
-    │       ├─ YES → Same 20 videos resend
-    │       └─ NO  → Channel se fresh 20 fetch + DB save
-    │
-    ├─ Videos send (protect_content=True)
-    ├─ Final caption + Contact button (permanent)
-    └─ JobQueue: 5 min baad videos + warning delete
-```
+- `protect_content=True` — videos forward ya download nahi ho sakte
+- Admin commands sirf `ADMIN_ID` wala use kar sakta hai
+- Sab credentials Railway environment variables mein — code mein kuch hardcoded nahi
+- Neon PostgreSQL SSL encrypted connection
 
 ---
 
-## 🔒 Security Notes
-
-- `protect_content=True` — forward/download disabled on videos
-- Admin commands sirf `ADMIN_ID` wala user use kar sakta hai
-- Sab credentials environment variables mein — code mein kuch hardcoded nahi
-- Neon PostgreSQL SSL required connection
-
----
-
-## ❓ Troubleshooting
-
-**Videos nahi aa rahe?**
-→ `/index 1 500` run karo pehle (range apni channel ke hisaab se adjust karo)
+## ❓ Common Problems
 
 **Bot respond nahi kar raha?**
-→ Railway logs check karo → Settings → Deployments → View Logs
+→ Railway → Deployments → View Logs check karo
+
+**Videos nahi aa rahe?**
+→ Admin se `/index` chalwao pehle
 
 **Database error?**
-→ `DATABASE_URL` mein `?sslmode=require` zaroori hai Neon ke liye
+→ `DATABASE_URL` mein `?sslmode=require` zaroori hai
+
+**Bot channel se forward nahi kar pa raha?**
+→ Bot ko channel ka Admin banao aur "Post Messages" permission do
+
+**`/index` bohot slow hai?**
+→ `/index 50 150` — range chhota rakho jitne messages channel mein hain
